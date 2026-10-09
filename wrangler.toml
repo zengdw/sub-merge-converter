@@ -1,0 +1,22 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "sub-merge-converter"
+main = "src/worker.jsx"
+compatibility_date = "2024-07-24"
+compatibility_flags = ["nodejs_compat"]
+
+# Cloudflare KV 命名空间绑定 (用于持久化短链、转换配置、合并订阅节点及管理员凭据)
+# 请在 Cloudflare Dashboard 创建 KV 命名空间后替换 id，或运行 npx wrangler kv namespace create SUBLINK_KV
+kv_namespaces = [
+  { binding = "SUBLINK_KV", id = "YOUR_KV_NAMESPACE_ID" }
+]
+
+# 静态资源目录 (包含前端转换器界面和订阅管理后台)
+[assets]
+directory = "./public"
+
+# 默认环境变量配置
+[vars]
+USERNAME = "admin"
+PASSWORD = "admin"
+# SUB_TOKEN = "your_custom_token"
+# API_URL = ""

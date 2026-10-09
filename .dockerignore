@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.github
+data
+Merge-sub
+sub-converter
+.wrangler
+npm-debug.log*

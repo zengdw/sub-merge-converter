@@ -1,0 +1,30 @@
+{
+  "name": "sub-merge-converter",
+  "version": "1.0.0",
+  "description": "全功能订阅合并管理与格式转换服务，支持 Cloudflare Worker 与 Docker Compose 部署",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "build:node": "node scripts/build-node.mjs",
+    "dev:node": "npm run build:node && node dist/node-server.cjs",
+    "start": "node dist/node-server.cjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.11",
+    "esbuild": "^0.27.0",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.51.0"
+  },
+  "dependencies": {
+    "esbuild-register": "^3.6.0",
+    "hono": "^4.10.7",
+    "ioredis": "^5.8.2",
+    "js-yaml": "^4.1.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
