@@ -5,8 +5,8 @@ export function createCloudflareRuntime(env) {
     const kv = env?.SUBLINK_KV ? new CloudflareKVAdapter(env.SUBLINK_KV) : null;
     const mergeSub = new MergeSubService({
         kv,
-        defaultUsername: env?.USERNAME || 'admin',
-        defaultPassword: env?.PASSWORD || 'admin',
+        defaultUsername: env?.AUTH_USERNAME || env?.USERNAME || 'admin',
+        defaultPassword: env?.AUTH_PASSWORD || env?.PASSWORD || 'admin',
         subToken: env?.SUB_TOKEN || undefined,
         apiUrl: env?.API_URL || '',
         logger: console

@@ -4,19 +4,26 @@ main = "src/worker.jsx"
 compatibility_date = "2024-07-24"
 compatibility_flags = ["nodejs_compat"]
 
+# 自定义域名绑定 (Cloudflare 自动管理 DNS 与 SSL 证书)
+routes = [
+  { pattern = "sub.asr.us.ci", custom_domain = true }
+]
+
 # Cloudflare KV 命名空间绑定 (用于持久化短链、转换配置、合并订阅节点及管理员凭据)
 # 请在 Cloudflare Dashboard 创建 KV 命名空间后替换 id，或运行 npx wrangler kv namespace create SUBLINK_KV
 kv_namespaces = [
-  { binding = "SUBLINK_KV", id = "YOUR_KV_NAMESPACE_ID" }
+  { binding = "SUBLINK_KV", id = "a6baf7bd2c7a4e59b50ee9bb53f389f1" }
 ]
 
 # 静态资源目录 (包含前端转换器界面和订阅管理后台)
 [assets]
 directory = "./public"
 
-# 默认环境变量配置
+# 普通环境变量配置 (注意：请勿在此明文写入密码，以免提交到 Git 导致泄露)
+# 密码与敏感 Token 推荐使用 Secret 安全注入：
+#   npx wrangler secret put AUTH_PASSWORD
+#   npx wrangler secret put AUTH_USERNAME
 [vars]
-USERNAME = "admin"
-PASSWORD = "admin"
+# AUTH_USERNAME = "admin"
 # SUB_TOKEN = "your_custom_token"
 # API_URL = ""

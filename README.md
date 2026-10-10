@@ -52,7 +52,12 @@
      { binding = "SUBLINK_KV", id = "填入你的KV_ID" }
    ]
    ```
-4. **一键发布部署**：
+4. **设置安全访问密码（Secret 加密存储，避免提交 Git 泄露）**：
+   ```bash
+   npx wrangler secret put AUTH_PASSWORD
+   # 根据提示输入您的安全访问密码
+   ```
+5. **一键发布部署**：
    ```bash
    npm run deploy
    # 或者
