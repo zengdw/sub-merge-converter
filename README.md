@@ -249,5 +249,9 @@
 
 ---
 
+## 参考项目
+- [sub-converter](https://github.com/eooce/sub-converter)
+- [Merge-sub](https://github.com/eooce/Merge-sub)
+
 ## 📄 许可证
 MIT License

@@ -1,6 +1,6 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
-import { APP_NAME, GITHUB_REPO, DOCS_URL, APP_VERSION } from '../constants.js';
+import { APP_NAME, GITHUB_REPO, APP_VERSION } from '../constants.js';
 
 export const Footer = () => {
     const currentYear = new Date().getFullYear();
@@ -24,15 +24,6 @@ export const Footer = () => {
                     </div>
 
                     <div class="flex items-center gap-6">
-                        <a
-                            href={DOCS_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
-                            aria-label="Documentation"
-                        >
-                            <i class="fas fa-book text-lg"></i>
-                        </a>
                         <a
                             href={GITHUB_REPO}
                             target="_blank"
