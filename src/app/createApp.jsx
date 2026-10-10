@@ -7,7 +7,6 @@ import { Navbar } from '../components/Navbar.jsx';
 import { Form } from '../components/Form.jsx';
 import { LoginPage } from '../components/LoginPage.jsx';
 import { Footer } from '../components/Footer.jsx';
-import { UpdateChecker } from '../components/UpdateChecker.jsx';
 import { SingboxConfigBuilder } from '../builders/SingboxConfigBuilder.js';
 import { ClashConfigBuilder } from '../builders/ClashConfigBuilder.js';
 import { SurgeConfigBuilder } from '../builders/SurgeConfigBuilder.js';
@@ -171,7 +170,6 @@ export function createApp(bindings = {}) {
                         </div>
                     </main>
                     <Footer />
-                    <UpdateChecker />
                 </div>
             </Layout>
         );
