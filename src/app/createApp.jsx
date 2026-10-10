@@ -1,9 +1,11 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import { Hono } from 'hono';
+import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import { Layout } from '../components/Layout.jsx';
 import { Navbar } from '../components/Navbar.jsx';
 import { Form } from '../components/Form.jsx';
+import { LoginPage } from '../components/LoginPage.jsx';
 import { Footer } from '../components/Footer.jsx';
 import { UpdateChecker } from '../components/UpdateChecker.jsx';
 import { SingboxConfigBuilder } from '../builders/SingboxConfigBuilder.js';
@@ -30,6 +32,53 @@ export function createApp(bindings = {}) {
 
     const app = new Hono();
 
+    // 检查请求是否已经通过认证（Cookie Session 或 Basic Auth）
+    const isRequestAuthenticated = async (c) => {
+        if (!services.mergeSub) return true;
+        const authEnabled = await services.mergeSub.isAuthEnabled();
+        if (!authEnabled) return true;
+
+        // 1. 验证 Cookie Session
+        const sessionToken = getCookie(c, 'sub_auth');
+        if (sessionToken) {
+            const validSession = await services.mergeSub.verifySessionToken(sessionToken);
+            if (validSession) return true;
+        }
+
+        // 2. 验证 Authorization: Basic Header
+        const authHeader = c.req.header('authorization');
+        if (authHeader) {
+            const validBasic = await services.mergeSub.verifyAuth(authHeader);
+            if (validBasic) return true;
+        }
+
+        return false;
+    };
+
+    // 页面访问守卫（未登录跳转至 /login）
+    const requirePageAuth = async (c, next) => {
+        const authenticated = await isRequestAuthenticated(c);
+        if (!authenticated) {
+            return c.redirect('/login');
+        }
+        await next();
+    };
+
+    // API 访问守卫（未认证返回 401 JSON + WWW-Authenticate）
+    const requireApiAuth = async (c, next) => {
+        const authenticated = await isRequestAuthenticated(c);
+        if (!authenticated) {
+            return new Response(JSON.stringify({ error: 'Unauthorized', message: '需要管理员账号密码认证' }), {
+                status: 401,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'WWW-Authenticate': 'Basic realm="SubMergeConverter"'
+                }
+            });
+        }
+        await next();
+    };
+
     app.use('*', async (c, next) => {
         const acceptLanguage = getRequestHeader(c.req, 'Accept-Language');
         const lang = c.req.query('lang') || acceptLanguage?.split(',')[0] || 'zh-CN';
@@ -38,7 +87,66 @@ export function createApp(bindings = {}) {
         await next();
     });
 
-    app.get('/', (c) => {
+    // 登录页面路由
+    app.get('/login', async (c) => {
+        const authenticated = await isRequestAuthenticated(c);
+        if (authenticated) {
+            return c.redirect('/');
+        }
+        const hasError = c.req.query('error') === '1';
+        const lang = c.get('lang');
+        return c.html(<LoginPage error={hasError} lang={lang} />);
+    });
+
+    // 登录验证提交
+    app.post('/login', async (c) => {
+        try {
+            let username = '';
+            let password = '';
+            const contentType = c.req.header('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const body = await c.req.json().catch(() => ({}));
+                username = body.username?.trim();
+                password = body.password?.trim();
+            } else {
+                const body = await c.req.parseBody().catch(() => ({}));
+                username = typeof body.username === 'string' ? body.username.trim() : '';
+                password = typeof body.password === 'string' ? body.password.trim() : '';
+            }
+
+            if (!services.mergeSub) return c.redirect('/');
+            const valid = await services.mergeSub.verifyUserPassword(username, password);
+            if (!valid) {
+                if (contentType.includes('application/json')) {
+                    return c.json({ success: false, error: '账号或密码错误' }, 401);
+                }
+                return c.redirect('/login?error=1');
+            }
+
+            const token = await services.mergeSub.getSessionToken();
+            setCookie(c, 'sub_auth', token, {
+                path: '/',
+                httpOnly: true,
+                maxAge: 60 * 60 * 24 * 30, // 30天有效
+                sameSite: 'Lax'
+            });
+
+            if (contentType.includes('application/json')) {
+                return c.json({ success: true, message: '登录成功' });
+            }
+            return c.redirect('/');
+        } catch (error) {
+            return c.redirect('/login?error=1');
+        }
+    });
+
+    // 退出登录路由
+    app.get('/logout', (c) => {
+        deleteCookie(c, 'sub_auth', { path: '/' });
+        return c.redirect('/login');
+    });
+
+    app.get('/', requirePageAuth, (c) => {
         const t = c.get('t');
         const lang = resolveLanguage(c.get('lang'));
         const subtitle = APP_SUBTITLE[lang] || APP_SUBTITLE['zh-CN'];
@@ -71,10 +179,11 @@ export function createApp(bindings = {}) {
 
     app.get('/singbox', async (c) => {
         try {
-            const config = c.req.query('config');
+            let config = c.req.query('config');
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
+            config = await resolveConfigInput(config, c.req, services.mergeSub);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -127,10 +236,11 @@ export function createApp(bindings = {}) {
 
     app.get('/clash', async (c) => {
         try {
-            const config = c.req.query('config');
+            let config = c.req.query('config');
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
+            config = await resolveConfigInput(config, c.req, services.mergeSub);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -176,10 +286,11 @@ export function createApp(bindings = {}) {
 
     app.get('/surge', async (c) => {
         try {
-            const config = c.req.query('config');
+            let config = c.req.query('config');
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
+            config = await resolveConfigInput(config, c.req, services.mergeSub);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -262,10 +373,11 @@ export function createApp(bindings = {}) {
     });
 
     app.get('/xray', async (c) => {
-        const inputString = c.req.query('config');
+        let inputString = c.req.query('config');
         if (!inputString) {
             return c.text('Missing config parameter', 400);
         }
+        inputString = await resolveConfigInput(inputString, c.req, services.mergeSub);
 
         const proxylist = inputString.split('\n');
         const finalProxyList = [];
@@ -333,14 +445,49 @@ export function createApp(bindings = {}) {
         }
     });
 
+    const handleSubExport = async (c) => {
+        if (!services.mergeSub) return c.text('MergeSub service not available', 500);
+        try {
+            const queryCFIP = c.req.query('CFIP');
+            const queryCFPORT = c.req.query('CFPORT');
+            const base64Content = await services.mergeSub.generateMergedSubscription(queryCFIP, queryCFPORT);
+            return c.text(base64Content, 200, {
+                'Content-Type': 'text/plain; charset=utf-8'
+            });
+        } catch (error) {
+            runtime.logger.error?.('Error generating merged subscription', error);
+            return c.text('Internal Server Error', 500);
+        }
+    };
+
     const redirectHandler = (prefix) => async (c) => {
         try {
+            if (services.mergeSub) await services.mergeSub.init();
             const code = c.req.param('code');
-            const shortLinks = requireShortLinkService(services.shortLinks);
-            const originalParam = await shortLinks.resolveShortCode(code);
+            const token = services.mergeSub ? services.mergeSub.getSubToken() : null;
+            let originalParam = null;
+            if (services.shortLinks) {
+                try {
+                    originalParam = await services.shortLinks.resolveShortCode(code);
+                } catch {}
+            }
+            const url = new URL(c.req.url);
+            if (token && code === token) {
+                // 如果是固定的 subToken：强制确保 config 参数始终指向当前服务的最新库存合并源！
+                if (originalParam) {
+                    try {
+                        const sp = new URLSearchParams(originalParam.startsWith('?') ? originalParam.slice(1) : originalParam);
+                        sp.set('config', `${url.origin}/${token}`);
+                        originalParam = '?' + sp.toString();
+                    } catch {
+                        originalParam = `?config=${encodeURIComponent(`${url.origin}/${token}`)}`;
+                    }
+                } else {
+                    originalParam = `?config=${encodeURIComponent(`${url.origin}/${token}`)}`;
+                }
+            }
             if (!originalParam) return c.text('Short URL not found', 404);
 
-            const url = new URL(c.req.url);
             return c.redirect(`${url.origin}/${prefix}${originalParam}`);
         } catch (error) {
             return handleError(c, error, runtime.logger);
@@ -350,7 +497,16 @@ export function createApp(bindings = {}) {
     app.get('/s/:code', redirectHandler('surge'));
     app.get('/b/:code', redirectHandler('singbox'));
     app.get('/c/:code', redirectHandler('clash'));
-    app.get('/x/:code', redirectHandler('xray'));
+    app.get('/x/:code', async (c) => {
+        if (services.mergeSub) await services.mergeSub.init();
+        const code = c.req.param('code');
+        const token = services.mergeSub ? services.mergeSub.getSubToken() : null;
+        if (token && code === token) {
+            // v2rayN 等客户端请求固定短链 /x/:token 时，直接返回最新合并的 Base64 内容
+            return handleSubExport(c);
+        }
+        return redirectHandler('xray')(c);
+    });
 
     app.post('/config', async (c) => {
         try {
@@ -549,90 +705,130 @@ export function createApp(bindings = {}) {
         }
     });
 
-    // 开放 API 路由 - 添加订阅（无需验证）
+    // 开放 API 路由 - 添加订阅（免认证，方便外部脚本调用）
     app.post('/api/add-subscriptions', async (c) => {
         try {
-            const body = await c.req.json();
-            const newSubscriptions = body.subscription;
+            const body = await c.req.json().catch(() => ({}));
+            const newSubscriptions = body.subscription || body.subscriptions || body.url || body.urls;
             if (!newSubscriptions) return c.json({ error: 'Subscription URL is required' }, 400);
             const { added, existing } = await services.mergeSub.addSubscriptions(newSubscriptions);
-            if (added.length > 0) {
-                return c.json({ success: true, added, existing }, 200);
-            }
-            return c.json({ success: false, error: 'All subscriptions already exist' }, 400);
+            const token = services.mergeSub.getSubToken();
+            return c.json({
+                success: true,
+                added,
+                existing,
+                token,
+                message: added.length > 0 ? `成功添加 ${added.length} 个订阅` : '所有订阅已存在'
+            }, 200);
         } catch (error) {
             return c.json({ error: error.message || 'Failed to add subscription' }, 500);
         }
     });
 
-    // 开放 API 路由 - 添加节点（无需验证）
+    // 开放 API 路由 - 添加节点（免认证，方便外部脚本调用）
     app.post('/api/add-nodes', async (c) => {
         try {
-            const body = await c.req.json();
-            const newNodes = body.nodes;
+            const body = await c.req.json().catch(() => ({}));
+            const newNodes = body.nodes || body.node || body.proxies || body.proxy;
             if (!newNodes) return c.json({ error: 'Nodes are required' }, 400);
             const { added, existing } = await services.mergeSub.addNodes(newNodes);
-            if (added.length > 0) {
-                return c.json({ success: true, added, existing }, 200);
-            }
-            return c.json({ success: false, error: 'All nodes already exist' }, 400);
+            const token = services.mergeSub.getSubToken();
+            return c.json({
+                success: true,
+                added,
+                existing,
+                token,
+                message: added.length > 0 ? `成功添加 ${added.length} 个节点` : '所有节点已存在'
+            }, 200);
         } catch (error) {
             return c.json({ error: error.message || 'Failed to add nodes' }, 500);
         }
     });
 
-    // 开放 API 路由 - 删除订阅（无需验证）
+    // 开放 API 路由 - 删除订阅（免认证，方便外部脚本调用）
     app.delete('/api/delete-subscriptions', async (c) => {
         try {
-            const body = await c.req.json();
-            const subsToDelete = body.subscription;
+            const body = await c.req.json().catch(() => ({}));
+            const subsToDelete = body.subscription || body.subscriptions || body.url || body.urls;
             if (!subsToDelete) return c.json({ error: 'Subscription URL is required' }, 400);
             const { deleted, notFound } = await services.mergeSub.deleteSubscriptions(subsToDelete);
-            if (deleted.length > 0) {
-                return c.json({ success: true, deleted, notFound }, 200);
-            }
-            return c.json({ success: false, error: 'No subscriptions found to delete' }, 404);
+            const token = services.mergeSub.getSubToken();
+            return c.json({
+                success: true,
+                deleted,
+                notFound,
+                token,
+                message: deleted.length > 0 ? `成功删除 ${deleted.length} 个订阅` : '未找到要删除的订阅'
+            }, deleted.length > 0 ? 200 : 404);
         } catch (error) {
             return c.json({ error: error.message || 'Failed to delete subscription' }, 500);
         }
     });
 
-    // 开放 API 路由 - 删除节点（无需验证）
+    // 开放 API 路由 - 删除节点（免认证，方便外部脚本调用）
     app.delete('/api/delete-nodes', async (c) => {
         try {
-            const body = await c.req.json();
-            const nodesToDelete = body.nodes;
+            const body = await c.req.json().catch(() => ({}));
+            const nodesToDelete = body.nodes || body.node || body.proxies || body.proxy;
             if (!nodesToDelete) return c.json({ error: 'Nodes are required' }, 400);
             const { deleted, notFound } = await services.mergeSub.deleteNodes(nodesToDelete);
-            if (deleted.length > 0) {
-                return c.json({ success: true, deleted, notFound }, 200);
-            }
-            return c.json({ success: false, error: 'No nodes found to delete' }, 404);
+            const token = services.mergeSub.getSubToken();
+            return c.json({
+                success: true,
+                deleted,
+                notFound,
+                token,
+                message: deleted.length > 0 ? `成功删除 ${deleted.length} 个节点` : '未找到要删除的节点'
+            }, deleted.length > 0 ? 200 : 404);
         } catch (error) {
             return c.json({ error: error.message || 'Failed to delete nodes' }, 500);
         }
     });
 
-    // 合并订阅输出路由 (/sub 及动态 token 订阅)
-    const handleSubExport = async (c) => {
-        if (!services.mergeSub) return c.text('MergeSub service not available', 500);
+    // API 路由 - 获取库存 (节点与订阅，需要验证)
+    app.get('/api/stock', requireApiAuth, async (c) => {
         try {
-            const queryCFIP = c.req.query('CFIP');
-            const queryCFPORT = c.req.query('CFPORT');
-            const base64Content = await services.mergeSub.generateMergedSubscription(queryCFIP, queryCFPORT);
-            return c.text(base64Content, 200, {
-                'Content-Type': 'text/plain; charset=utf-8'
+            if (!services.mergeSub) return c.json({ subscriptions: [], nodes: [], subToken: '' });
+            const data = await services.mergeSub.getData();
+            return c.json(data);
+        } catch (error) {
+            return c.json({ error: error.message || 'Failed to fetch stock' }, 500);
+        }
+    });
+
+    // API 路由 - 保存库存 (自动分类保存节点与订阅，需要验证)
+    app.post('/api/stock', requireApiAuth, async (c) => {
+        try {
+            if (!services.mergeSub) return c.json({ error: 'MergeSub service not available' }, 500);
+            const body = await c.req.json();
+            const content = typeof body.content === 'string' ? body.content : '';
+            const result = await services.mergeSub.saveFromInput(content);
+            const token = services.mergeSub.getSubToken();
+            return c.json({
+                success: true,
+                count: {
+                    subscriptions: result.subscriptions.length,
+                    nodes: result.nodes.length
+                },
+                token
             });
         } catch (error) {
-            runtime.logger.error?.('Error generating merged subscription', error);
-            return c.text('Internal Server Error', 500);
+            return c.json({ error: error.message || 'Failed to save stock' }, 500);
         }
-    };
+    });
+
+    // API 路由 - 获取固定 subToken（需要验证）
+    app.get('/api/sub-token', requireApiAuth, async (c) => {
+        if (services.mergeSub) await services.mergeSub.init();
+        const token = services.mergeSub ? services.mergeSub.getSubToken() : '';
+        return c.json({ token });
+    });
 
     app.get('/sub', handleSubExport);
 
     // 动态路径匹配 SUB_TOKEN
     app.get('/:token', async (c, next) => {
+        if (services.mergeSub) await services.mergeSub.init();
         const token = c.req.param('token');
         if (services.mergeSub && token === services.mergeSub.getSubToken()) {
             return handleSubExport(c);
@@ -801,4 +997,35 @@ function handleError(c, error, logger) {
     }
     logger.error?.('Unhandled error', error);
     return c.text(`Error: ${error.message}`, 500);
+}
+
+async function resolveConfigInput(config, req, mergeSub) {
+    if (!config || !mergeSub) return config;
+    await mergeSub.init();
+    const token = mergeSub.getSubToken();
+    if (!token) return config;
+
+    const lines = config.split('\n');
+    let hasMatched = false;
+    const replaced = await Promise.all(lines.map(async (line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return line;
+        if (trimmed === token || trimmed === 'stock') {
+            hasMatched = true;
+            return await mergeSub.getMergedNodesPlain();
+        }
+        if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+            try {
+                const u = new URL(trimmed);
+                if (u.pathname === `/${token}` || u.pathname === '/sub') {
+                    hasMatched = true;
+                    const cfip = u.searchParams.get('CFIP');
+                    const cfport = u.searchParams.get('CFPORT');
+                    return await mergeSub.getMergedNodesPlain(cfip, cfport);
+                }
+            } catch {}
+        }
+        return line;
+    }));
+    return hasMatched ? replaced.join('\n') : config;
 }

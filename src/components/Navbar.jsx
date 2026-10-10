@@ -13,13 +13,6 @@ export const Navbar = () => {
                     </a>
                     <div class="flex items-center gap-3">
                         <a
-                            href="/admin"
-                            class="px-4 py-2 text-primary-600 dark:text-primary-400 text-sm font-medium rounded-full bg-primary-50 dark:bg-primary-950/40 hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors flex items-center gap-2"
-                        >
-                            <i class="fas fa-layer-group"></i>
-                            <span>订阅管理</span>
-                        </a>
-                        <a
                             href={DOCS_URL}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -44,6 +37,14 @@ export const Navbar = () => {
                         >
                             <i class="fas" x-bind:class="darkMode ? 'fa-sun' : 'fa-moon'"></i>
                         </button>
+                        <a
+                            href="/logout"
+                            class="p-2 rounded-lg text-gray-500 hover:text-red-600 hover:bg-red-50 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-950/30 transition-colors flex items-center gap-1.5 text-sm"
+                            title="退出登录"
+                        >
+                            <i class="fas fa-sign-out-alt"></i>
+                            <span class="hidden sm:inline text-xs font-medium">退出</span>
+                        </a>
                     </div>
                 </div>
             </div>

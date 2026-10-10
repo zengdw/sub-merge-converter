@@ -50,49 +50,206 @@ export const Form = (props) => {
       <form {...{'x-on:submit.prevent': 'submitForm'}} class="space-y-8">
 
       {/* Input Section */}
-      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-all duration-300 hover:shadow-md group">
-        <TextareaWithActions
-          id="input"
-          name="input"
-          label={t('shareUrls')}
-          labelPrefix={
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 transition-all duration-300 hover:shadow-md">
+        {/* Header: Label, Mode Switcher, Actions */}
+        <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div class="flex items-center gap-3 flex-wrap">
             <span class="w-8 h-8 rounded-lg bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 flex items-center justify-center">
               <i class="fas fa-link text-sm"></i>
             </span>
-          }
-          model="input"
-          rows={5}
-          placeholder={t('urlPlaceholder')}
-          required
-          labelActionsWrapperClass="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-          labelActions={[
-            {
-              key: 'paste',
-              icon: 'fas fa-paste',
-              label: t('paste'),
-              hideLabelOnMobile: true,
-              className:
-                'px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-600 dark:hover:text-primary-400 transition-colors flex items-center gap-1',
-              title: t('paste'),
-              attrs: {
-                'x-on:click': "navigator.clipboard.readText().then(text => input = text).catch(() => {})"
-              }
-            },
-            {
-              key: 'clear',
-              icon: 'fas fa-times',
-              label: t('clear'),
-              hideLabelOnMobile: true,
-              className:
-                'px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-colors flex items-center gap-1',
-              title: t('clear'),
-              attrs: {
-                'x-on:click': "input = ''",
-                'x-show': 'input'
-              }
-            }
-          ]}
-        />
+            <label for="input" class="text-lg font-semibold text-gray-900 dark:text-white">
+              {t('shareUrls')}
+            </label>
+
+            {/* View Mode Toggle: Cards vs Raw Text */}
+            <div class="inline-flex p-1 bg-gray-100 dark:bg-gray-700/60 rounded-xl text-xs font-medium">
+              <button
+                type="button"
+                x-on:click="switchInputView('cards')"
+                x-bind:class="inputViewMode === 'cards' ? 'bg-white dark:bg-gray-800 text-primary-600 dark:text-primary-400 shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                class="px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5"
+                title="以卡片列表清晰查看与管理每个节点"
+              >
+                <i class="fas fa-layer-group text-xs"></i>
+                <span>节点列表</span>
+                <span
+                  x-show="parsedInputNodes.length > 0"
+                  x-text="parsedInputNodes.length"
+                  class="px-1.5 py-0.2 rounded-full text-[10px] bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400 font-semibold"
+                ></span>
+              </button>
+              <button
+                type="button"
+                x-on:click="switchInputView('text')"
+                x-bind:class="inputViewMode === 'text' ? 'bg-white dark:bg-gray-800 text-primary-600 dark:text-primary-400 shadow-sm' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                class="px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5"
+                title="切换为原生纯文本编辑"
+              >
+                <i class="fas fa-code text-xs"></i>
+                <span>源码文本</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div class="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              x-on:click="loadFromStock()"
+              x-bind:disabled="loadingStock"
+              class="px-2.5 py-1 text-xs font-medium bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors flex items-center gap-1.5 border border-primary-200/50 dark:border-primary-800/40 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
+              title="从库存中加载已保存的节点和订阅，若输入源已有数据则自动合并去重"
+            >
+              <i class="fas" x-bind:class="loadingStock ? 'fa-spinner fa-spin' : 'fa-box-open'"></i>
+              <span>从库存中加载</span>
+            </button>
+            
+            <button
+              type="button"
+              x-show="parsedInputNodes.length > 1"
+              x-on:click="formatInputSpacing()"
+              class="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-600 dark:hover:text-primary-400 transition-colors flex items-center gap-1"
+              title="将各节点以明显空行分隔整齐排版"
+            >
+              <i class="fas fa-align-left text-xs"></i>
+              <span class="hidden sm:inline">空行规整</span>
+            </button>
+
+            <button
+              type="button"
+              x-on:click="navigator.clipboard.readText().then(text => { input = text; formatInputSpacing(); }).catch(() => {})"
+              class="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-600 dark:hover:text-primary-400 transition-colors flex items-center gap-1"
+              title={t('paste')}
+            >
+              <i class="fas fa-paste text-xs"></i>
+              <span class="hidden sm:inline">{t('paste')}</span>
+            </button>
+
+            <button
+              type="button"
+              x-show="input"
+              x-on:click="input = ''"
+              class="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 transition-colors flex items-center gap-1"
+              title={t('clear')}
+            >
+              <i class="fas fa-times text-xs"></i>
+              <span class="hidden sm:inline">{t('clear')}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* View 1: Cards View */}
+        <div x-show="inputViewMode === 'cards'" class="transition-all duration-200">
+          {/* Empty State */}
+          <div
+            x-show="parsedInputNodes.length === 0"
+            class="py-10 px-4 text-center rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700/80 bg-gray-50/50 dark:bg-gray-900/30 flex flex-col items-center justify-center gap-3"
+          >
+            <div class="w-12 h-12 rounded-full bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 flex items-center justify-center text-lg">
+              <i class="fas fa-cubes"></i>
+            </div>
+            <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              当前暂无节点数据
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 max-w-sm">
+              可点击右上角【从库存中加载】载入已保存节点，或切换到【源码文本】直接粘贴
+            </p>
+            <div class="flex items-center gap-2 mt-1">
+              <button
+                type="button"
+                x-on:click="loadFromStock()"
+                class="px-3 py-1.5 text-xs font-semibold bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition shadow-sm flex items-center gap-1.5"
+              >
+                <i class="fas fa-box-open"></i>
+                <span>从库存中加载</span>
+              </button>
+              <button
+                type="button"
+                x-on:click="switchInputView('text')"
+                class="px-3 py-1.5 text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition"
+              >
+                切换为源码文本
+              </button>
+            </div>
+          </div>
+
+          {/* Cards List */}
+          <div
+            x-show="parsedInputNodes.length > 0"
+            class="space-y-3 max-h-[460px] overflow-y-auto pr-1"
+          >
+            <template x-for="(node, idx) in parsedInputNodes" {...{ ':key': 'idx' }}>
+              <div class="p-3.5 rounded-xl border border-gray-200 dark:border-gray-700/80 bg-gray-50/80 dark:bg-gray-800/80 hover:border-primary-400/60 dark:hover:border-primary-500/60 hover:bg-white dark:hover:bg-gray-800 transition-all shadow-sm flex flex-col gap-2">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span
+                      class="px-2 py-0.5 rounded text-[11px] font-bold border tracking-wider uppercase shrink-0"
+                      x-bind:class="node.badgeClass"
+                      x-text="node.type"
+                    ></span>
+                    <span
+                      class="font-semibold text-sm text-gray-900 dark:text-white truncate"
+                      x-text="node.name"
+                      title="节点备注名"
+                    ></span>
+                    <span
+                      x-show="node.address"
+                      class="text-xs font-mono text-gray-400 dark:text-gray-500 truncate hidden md:inline"
+                      x-text="node.address"
+                    ></span>
+                  </div>
+                  <div class="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      x-on:click="copyNodeUrl(node.raw)"
+                      class="p-1.5 text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 rounded-lg transition-colors"
+                      title="复制此节点原始链接"
+                    >
+                      <i class="far fa-copy text-xs"></i>
+                    </button>
+                    <button
+                      type="button"
+                      x-on:click="removeNodeAtIndex(idx)"
+                      class="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg transition-colors"
+                      title="从当前列表删除此节点"
+                    >
+                      <i class="fas fa-trash-alt text-xs"></i>
+                    </button>
+                  </div>
+                </div>
+                <div
+                  class="text-[11px] font-mono text-gray-500 dark:text-gray-400 truncate bg-white/70 dark:bg-gray-900/60 px-2.5 py-1.5 rounded-lg border border-gray-150 dark:border-gray-750 select-all"
+                  x-text="node.raw"
+                  title="完整节点URL"
+                ></div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        {/* View 2: Raw Text View (Always in DOM for form submission & x-model) */}
+        <div x-show="inputViewMode === 'text'" class="transition-all duration-200">
+          <textarea
+            id="input"
+            name="input"
+            x-model="input"
+            rows={7}
+            placeholder={t('urlPlaceholder')}
+            class="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 text-gray-900 dark:text-white font-mono text-xs sm:text-sm leading-relaxed bg-gray-50 dark:bg-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 resize-y placeholder-gray-400 dark:placeholder-gray-500"
+          ></textarea>
+          <div class="mt-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+            <span>💡 提示：支持单行或双换行（空行）输入多个订阅链接或节点链接</span>
+            <span x-show="parsedInputNodes.length > 0" x-text="`已检测到 ${parsedInputNodes.length} 个独立项目`" class="font-medium text-primary-600 dark:text-primary-400"></span>
+          </div>
+        </div>
+
+        {/* Notice line */}
+        <div
+          x-show="stockNotice"
+          x-text="stockNotice"
+          class="mt-3 text-xs font-medium text-primary-600 dark:text-primary-400 flex items-center gap-1.5 transition-all"
+          style="display: none;"
+        ></div>
       </div>
 
       {/* Advanced Options Toggle */}
@@ -345,38 +502,52 @@ class="px-6 py-3.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 bo
   <div x-cloak x-show="generatedLinks" x-data="{ copied: null }" {...{'x-transition:enter': 'transition ease-out duration-500', 'x-transition:enter-start': 'opacity-0 transform translate-y-8', 'x-transition:enter-end': 'opacity-100 transform translate-y-0'}} class="mt-12">
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-8 transition-all duration-300 hover:shadow-md">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <h2 class="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-          <span class="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center">
-            <i class="fas fa-link text-sm"></i>
-          </span>
-          {t('subscriptionLinks')}
-        </h2>
+        <div>
+          <h2 class="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+            <span class="w-8 h-8 rounded-lg bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center">
+              <i class="fas fa-link text-sm"></i>
+            </span>
+            {t('subscriptionLinks')}
+          </h2>
+          <p class="text-xs text-green-600 dark:text-green-400 mt-1 flex items-center gap-1.5 font-medium">
+            <i class="fas fa-check-circle"></i>
+            <span>节点与订阅已自动保存至库存，短链接永久固定，客户端可直接添加并随时更新！</span>
+          </p>
+        </div>
+
+        <button
+          type="button"
+          x-on:click="showFullUrls = !showFullUrls"
+          class="text-xs font-semibold px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/60 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex items-center gap-1.5 self-start sm:self-auto"
+        >
+          <i class="fas" x-bind:class="showFullUrls ? 'fa-compress-alt' : 'fa-expand-alt'"></i>
+          <span x-text="showFullUrls ? '显示短链接' : '显示完整长链接'"></span>
+        </button>
       </div>
 
       <div class="mt-6 space-y-4">
         {LINK_FIELDS.map((field) => (
           <div class="relative group" key={field.key}>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              {t(field.labelKey)}
-            </label>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300">
+                {t(field.labelKey)}
+              </label>
+              <span class="text-xs text-gray-400 dark:text-gray-500 font-mono" x-show="!showFullUrls">固定短链</span>
+            </div>
             <div class="flex gap-2">
               <input
                 type="text"
                 readonly
-                x-bind:value={`shortenedLinks ? shortenedLinks?.${field.key} : generatedLinks?.${field.key}`}
-                class="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 focus:ring-2 focus:border-transparent transition-all duration-200 font-mono text-sm"
-                x-bind:class="shortenedLinks ? 'text-primary-600 dark:text-primary-400 font-semibold focus:ring-primary-500' : 'text-gray-600 dark:text-gray-400 focus:ring-green-500'"
+                x-bind:value={`showFullUrls ? generatedLinks?.${field.key} : (shortenedLinks ? shortenedLinks?.${field.key} : generatedLinks?.${field.key})`}
+                class="w-full px-4 py-2.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 focus:ring-2 focus:border-transparent transition-all duration-200 font-mono text-sm"
+                x-bind:class="!showFullUrls ? 'text-primary-600 dark:text-primary-400 font-semibold focus:ring-primary-500' : 'text-gray-600 dark:text-gray-400 focus:ring-green-500'"
               />
               <button
                 type="button"
-                x-on:click={`navigator.clipboard.writeText((shortenedLinks || generatedLinks)?.${field.key}); copied = '${field.key}'; setTimeout(() => copied = null, 2000)`}
-                class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
-                x-bind:class={`{
-                  'hover:bg-green-100 dark:hover:bg-green-900/30 hover:text-green-600 dark:hover:text-green-400': !shortenedLinks,
-                  'hover:bg-primary-100 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400': shortenedLinks,
-                  'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400': !shortenedLinks && copied === '${field.key}',
-                  'bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400': shortenedLinks && copied === '${field.key}'
-                }`}
+                x-on:click={`navigator.clipboard.writeText((showFullUrls ? generatedLinks : (shortenedLinks || generatedLinks))?.${field.key}); copied = '${field.key}'; setTimeout(() => copied = null, 2000)`}
+                class="px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-lg transition-colors duration-200 flex items-center justify-center gap-2 hover:bg-primary-50 dark:hover:bg-primary-900/30 hover:text-primary-600 dark:hover:text-primary-400"
+                x-bind:class={`copied === '${field.key}' ? 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400' : ''`}
+                title="复制订阅链接"
               >
                 <i class="fas" x-bind:class={`copied === '${field.key}' ? 'fa-check' : 'fa-copy'`}></i>
               </button>
@@ -385,39 +556,20 @@ class="px-6 py-3.5 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 bo
         ))}
       </div>
 
-      {/* Shortening Controls */}
-      <div class="mt-6">
-        <div class="flex flex-col items-center gap-3">
-          <div class="w-full max-w-md">
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center">
-              {t('customShortCode')} <span class="text-gray-400">({t('optional')})</span>
-            </label>
-            <input
-              type="text"
-              x-model="customShortCode"
-              placeholder={t('customShortCodePlaceholder')}
-              class="w-full px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200 text-center"
-            />
-          </div>
+      {/* Custom short code optional control */}
+      <div class="mt-6 pt-5 border-t border-gray-100 dark:border-gray-700/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-info-circle text-primary-500"></i>
+          <span>v2rayN、Clash 等客户端配置上方短链后，随时在输入源修改并转换，客户端即可同步更新。</span>
         </div>
-        <div class="flex justify-center mt-4">
-          <button
-            type="button"
-            x-on:click="shortenedLinks ? shortenedLinks = null : shortenLinks()"
-            x-bind:disabled="!shortenedLinks && shortening"
-            class="px-6 py-3 rounded-xl font-semibold transition-all duration-200 flex items-center gap-2 shadow-lg"
-            x-bind:class="shortenedLinks
-              ? 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 shadow-sm'
-              : 'bg-gradient-to-r from-primary-600 to-primary-500 hover:from-primary-700 hover:to-primary-600 text-white shadow-primary-500/30 hover:shadow-primary-500/40 disabled:opacity-50 disabled:cursor-not-allowed'"
-          >
-            <i
-              class="fas"
-              x-bind:class="shortenedLinks ? 'fa-expand-alt' : (shortening ? 'fa-spinner fa-spin' : 'fa-compress-alt')"
-            ></i>
-            <span
-              x-text="shortenedLinks ? showFullLinksText : (shortening ? shorteningText : shortenLinksText)"
-            ></span>
-          </button>
+        <div class="flex items-center gap-2">
+          <span>自定义短码:</span>
+          <input
+            type="text"
+            x-model="customShortCode"
+            placeholder="默认固定Token"
+            class="px-2.5 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-xs w-28 text-center focus:ring-1 focus:ring-primary-500"
+          />
         </div>
       </div>
     </div>

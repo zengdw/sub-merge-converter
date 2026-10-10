@@ -52,6 +52,7 @@ export class MergeSubService {
         this.apiUrl = options.apiUrl || '';
         this.defaultUsername = options.defaultUsername || 'admin';
         this.defaultPassword = options.defaultPassword || 'admin';
+        this.initialSubTokenFromEnv = Boolean(options.subToken);
         this.subToken = options.subToken || this.generateDefaultToken();
 
         this.cachedCredentials = null;
@@ -191,6 +192,34 @@ export class MergeSubService {
         }
     }
 
+    async isAuthEnabled() {
+        await this.init();
+        return Boolean(this.cachedCredentials?.username && this.cachedCredentials?.password);
+    }
+
+    async verifyUserPassword(username, password) {
+        await this.init();
+        if (!this.cachedCredentials?.username || !this.cachedCredentials?.password) return false;
+        return (
+            username === this.cachedCredentials.username &&
+            password === this.cachedCredentials.password
+        );
+    }
+
+    async getSessionToken() {
+        await this.init();
+        const { username, password } = this.cachedCredentials || {};
+        if (!username || !password) return '';
+        const raw = `${username}:${password}:${this.subToken}`;
+        return encodeBase64(raw);
+    }
+
+    async verifySessionToken(token) {
+        if (!token) return false;
+        const current = await this.getSessionToken();
+        return Boolean(current && token === current);
+    }
+
     async updateCredentials({ username, password, currentPassword }) {
         await this.init();
         if (!username || !password || !currentPassword) {
@@ -212,13 +241,20 @@ export class MergeSubService {
             try {
                 const content = await this.fs.readFile(this.dataFile, 'utf8');
                 const parsed = JSON.parse(content);
+                if (parsed.subToken && !this.initialSubTokenFromEnv) {
+                    this.subToken = parsed.subToken;
+                }
                 this.cachedData = {
+                    subToken: this.subToken,
                     subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
                     nodes: typeof parsed.nodes === 'string' ? parsed.nodes : ''
                 };
+                if (!parsed.subToken) {
+                    await this.saveData(this.cachedData.subscriptions, this.cachedData.nodes).catch(() => {});
+                }
                 return this.cachedData;
             } catch {
-                const initial = { subscriptions: [], nodes: '' };
+                const initial = { subToken: this.subToken, subscriptions: [], nodes: '' };
                 try {
                     await this.fs.mkdir(this.dataDir, { recursive: true });
                     await this.fs.writeFile(this.dataFile, JSON.stringify(initial, null, 2), 'utf8');
@@ -235,27 +271,36 @@ export class MergeSubService {
                 const stored = await this.kv.get('mergesub:data');
                 if (stored) {
                     const parsed = JSON.parse(stored);
+                    if (parsed.subToken && !this.initialSubTokenFromEnv) {
+                        this.subToken = parsed.subToken;
+                    }
                     this.cachedData = {
+                        subToken: this.subToken,
                         subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
                         nodes: typeof parsed.nodes === 'string' ? parsed.nodes : ''
                     };
+                    if (!parsed.subToken) {
+                        await this.saveData(this.cachedData.subscriptions, this.cachedData.nodes).catch(() => {});
+                    }
                     return this.cachedData;
                 }
             } catch (e) {
                 this.logger.warn?.('Failed reading data from KV:', e);
             }
-            this.cachedData = { subscriptions: [], nodes: '' };
+            this.cachedData = { subToken: this.subToken, subscriptions: [], nodes: '' };
+            await this.kv.put('mergesub:data', JSON.stringify(this.cachedData)).catch(() => {});
             return this.cachedData;
         }
 
         if (!this.cachedData) {
-            this.cachedData = { subscriptions: [], nodes: '' };
+            this.cachedData = { subToken: this.subToken, subscriptions: [], nodes: '' };
         }
         return this.cachedData;
     }
 
     async saveData(subscriptions, nodes) {
         const payload = {
+            subToken: this.subToken,
             subscriptions: Array.isArray(subscriptions) ? subscriptions : [],
             nodes: typeof nodes === 'string' ? nodes : ''
         };
@@ -280,6 +325,22 @@ export class MergeSubService {
         }
     }
 
+    async saveFromInput(inputText) {
+        await this.init();
+        const lines = (inputText || '').split('\n').map(l => l.trim()).filter(Boolean);
+        const subscriptions = [];
+        const nodes = [];
+        for (const line of lines) {
+            if ((line.startsWith('http://') || line.startsWith('https://')) && !line.includes('@')) {
+                subscriptions.push(line);
+            } else {
+                nodes.push(line);
+            }
+        }
+        await this.saveData(subscriptions, nodes.join('\n'));
+        return { subscriptions, nodes };
+    }
+
     async getData() {
         await this.init();
         await this.loadData();
@@ -288,7 +349,8 @@ export class MergeSubService {
             : [];
         return {
             subscriptions: this.cachedData.subscriptions || [],
-            nodes: nodesList
+            nodes: nodesList,
+            subToken: this.subToken
         };
     }
 
@@ -307,7 +369,7 @@ export class MergeSubService {
         const inputList = Array.isArray(subscriptionInput)
             ? subscriptionInput
             : typeof subscriptionInput === 'string'
-                ? subscriptionInput.split('\n')
+                ? subscriptionInput.split(/\r?\n/)
                 : [];
 
         const newSubs = inputList.map(s => s.trim()).filter(Boolean);
@@ -339,30 +401,22 @@ export class MergeSubService {
         await this.init();
         await this.loadData();
 
-        const inputList = Array.isArray(nodeInput)
-            ? nodeInput
-            : typeof nodeInput === 'string'
-                ? nodeInput.split('\n')
-                : [];
-
-        const newNodes = inputList
-            .map(n => n.trim())
-            .filter(Boolean)
-            .map(n => tryDecodeBase64(n));
-
+        const newNodes = this.extractNodes(nodeInput);
         if (newNodes.length === 0) {
             throw new Error('Node is required');
         }
 
         let nodesList = typeof this.cachedData.nodes === 'string'
-            ? this.cachedData.nodes.split('\n').map(n => n.trim()).filter(Boolean)
+            ? this.cachedData.nodes.split(/\r?\n/).map(n => n.trim()).filter(Boolean)
             : [];
 
         const added = [];
         const existing = [];
 
         for (const node of newNodes) {
-            if (nodesList.includes(node)) {
+            const nodeClean = cleanNodeString(node);
+            const exists = nodesList.some(n => cleanNodeString(n) === nodeClean);
+            if (exists) {
                 existing.push(node);
             } else {
                 added.push(node);
@@ -384,7 +438,7 @@ export class MergeSubService {
         const inputList = Array.isArray(subscriptionInput)
             ? subscriptionInput
             : typeof subscriptionInput === 'string'
-                ? subscriptionInput.split('\n')
+                ? subscriptionInput.split(/\r?\n/)
                 : [];
 
         const toDelete = inputList.map(s => cleanNodeString(s)).filter(Boolean);
@@ -397,7 +451,7 @@ export class MergeSubService {
         const notFound = [];
 
         for (const item of toDelete) {
-            const index = currentSubs.findIndex(s => cleanNodeString(s) === item);
+            const index = currentSubs.findIndex(s => cleanNodeString(s) === item || s === item);
             if (index !== -1) {
                 deleted.push(currentSubs[index]);
                 currentSubs.splice(index, 1);
@@ -417,31 +471,49 @@ export class MergeSubService {
         await this.init();
         await this.loadData();
 
-        const inputList = Array.isArray(nodeInput)
-            ? nodeInput
-            : typeof nodeInput === 'string'
-                ? nodeInput.split('\n')
-                : [];
-
-        const toDelete = inputList.map(n => cleanNodeString(n)).filter(Boolean);
+        const toDelete = this.extractNodes(nodeInput);
         if (toDelete.length === 0) {
             throw new Error('Node is required');
         }
 
         let nodesList = typeof this.cachedData.nodes === 'string'
-            ? this.cachedData.nodes.split('\n').map(n => cleanNodeString(n)).filter(Boolean)
+            ? this.cachedData.nodes.split(/\r?\n/).map(n => n.trim()).filter(Boolean)
             : [];
 
         const deleted = [];
         const notFound = [];
 
-        for (const item of toDelete) {
-            const index = nodesList.findIndex(n => cleanNodeString(n) === item);
-            if (index !== -1) {
-                deleted.push(item);
-                nodesList.splice(index, 1);
+        for (const target of toDelete) {
+            const targetClean = cleanNodeString(target);
+            let foundIdx = -1;
+            for (let i = 0; i < nodesList.length; i++) {
+                const current = nodesList[i];
+                const currentClean = cleanNodeString(current);
+                if (currentClean === targetClean) {
+                    foundIdx = i;
+                    break;
+                }
+                try {
+                    if (decodeURIComponent(currentClean) === decodeURIComponent(targetClean)) {
+                        foundIdx = i;
+                        break;
+                    }
+                } catch {}
+                if (targetClean.startsWith('#') && currentClean.endsWith(targetClean)) {
+                    foundIdx = i;
+                    break;
+                }
+                if (!targetClean.includes('://') && currentClean.endsWith('#' + targetClean)) {
+                    foundIdx = i;
+                    break;
+                }
+            }
+
+            if (foundIdx !== -1) {
+                deleted.push(nodesList[foundIdx]);
+                nodesList.splice(foundIdx, 1);
             } else {
-                notFound.push(item);
+                notFound.push(target);
             }
         }
 
@@ -450,6 +522,25 @@ export class MergeSubService {
         }
 
         return { deleted, notFound };
+    }
+
+    extractNodes(input) {
+        if (!input) return [];
+        const rawList = Array.isArray(input)
+            ? input
+            : typeof input === 'string'
+                ? input.split(/\r?\n/)
+                : [];
+        const results = [];
+        for (const item of rawList) {
+            if (!item || typeof item !== 'string') continue;
+            const decoded = tryDecodeBase64(item.trim());
+            const lines = decoded.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+            for (const line of lines) {
+                results.push(cleanNodeString(line));
+            }
+        }
+        return results.filter(Boolean);
     }
 
     replaceAddressAndPort(content, targetCFIP, targetCFPORT) {
@@ -520,7 +611,7 @@ export class MergeSubService {
         }
     }
 
-    async generateMergedSubscription(targetCFIP, targetCFPORT) {
+    async getMergedNodesPlain(targetCFIP, targetCFPORT) {
         await this.init();
         await this.loadData();
 
@@ -532,7 +623,6 @@ export class MergeSubService {
                 const decoded = decodeBase64(text.trim());
                 return this.replaceAddressAndPort(decoded, targetCFIP, targetCFPORT);
             } catch {
-                // 如果本来就是纯文本节点
                 return this.replaceAddressAndPort(text, targetCFIP, targetCFPORT);
             }
         });
@@ -550,6 +640,11 @@ export class MergeSubService {
             .map(n => n.trim())
             .filter(Boolean);
 
-        return encodeBase64(allNodes.join('\n'));
+        return allNodes.join('\n');
+    }
+
+    async generateMergedSubscription(targetCFIP, targetCFPORT) {
+        const plain = await this.getMergedNodesPlain(targetCFIP, targetCFPORT);
+        return encodeBase64(plain);
     }
 }

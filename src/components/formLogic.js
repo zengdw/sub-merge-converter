@@ -99,7 +99,12 @@ export const formLogicFn = (t) => {
             configValidationState: '',
             configValidationMessage: '',
             customUA: '',
+            inputViewMode: 'cards', // 'cards' | 'text'
             loading: false,
+            loadingStock: false,
+            stockNotice: '',
+            showFullUrls: false,
+            fixedSubToken: '',
             generatedLinks: null,
             shortenedLinks: null,
             shortening: false,
@@ -113,7 +118,185 @@ export const formLogicFn = (t) => {
             shorteningText: '',
             showFullLinksText: '',
 
+            get parsedInputNodes() {
+                const text = (this.input || '').trim();
+                if (!text) return [];
+
+                const safeBase64Decode = (str) => {
+                    if (!str) return null;
+                    try {
+                        let b64 = str.replace(/-/g, '+').replace(/_/g, '/').trim();
+                        while (b64.length % 4) b64 += '=';
+                        if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+                            const binary = window.atob(b64);
+                            const bytes = new Uint8Array(binary.length);
+                            for (let i = 0; i < binary.length; i++) {
+                                bytes[i] = binary.charCodeAt(i);
+                            }
+                            return new TextDecoder('utf-8').decode(bytes);
+                        } else if (typeof Buffer !== 'undefined') {
+                            return Buffer.from(b64, 'base64').toString('utf8');
+                        }
+                    } catch {}
+                    return null;
+                };
+
+                const rawLines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+                const result = [];
+                for (let i = 0; i < rawLines.length; i++) {
+                    const url = rawLines[i];
+                    let type = 'NODE';
+                    let name = '';
+                    let address = '';
+                    let badgeClass = 'bg-gray-100 text-gray-700 dark:bg-gray-750 dark:text-gray-300 border-gray-200 dark:border-gray-650';
+
+                    // 1. 尝试从 URL 末尾的 # 提取显式备注
+                    const hashIndex = url.indexOf('#');
+                    if (hashIndex !== -1) {
+                        try {
+                            name = decodeURIComponent(url.slice(hashIndex + 1).trim());
+                        } catch {
+                            name = url.slice(hashIndex + 1).trim();
+                        }
+                    }
+
+                    const lower = url.toLowerCase();
+                    if (lower.startsWith('hysteria2://') || lower.startsWith('hy2://')) {
+                        type = 'HY2';
+                        badgeClass = 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-600 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800/60';
+                    } else if (lower.startsWith('vless://')) {
+                        type = 'VLESS';
+                        badgeClass = 'bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-800/60';
+                    } else if (lower.startsWith('trojan://')) {
+                        type = 'TROJAN';
+                        badgeClass = 'bg-purple-50 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 border-purple-200 dark:border-purple-800/60';
+                    } else if (lower.startsWith('vmess://')) {
+                        type = 'VMESS';
+                        badgeClass = 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/60';
+                        const rawB64 = url.slice(8).trim();
+                        const hIdx = rawB64.indexOf('#');
+                        const b64Part = hIdx !== -1 ? rawB64.slice(0, hIdx) : rawB64;
+                        const decoded = safeBase64Decode(b64Part);
+                        if (decoded) {
+                            try {
+                                const vmessObj = JSON.parse(decoded);
+                                if (vmessObj.ps && !name) {
+                                    name = String(vmessObj.ps).trim();
+                                }
+                                if (vmessObj.add) {
+                                    address = vmessObj.port ? `${vmessObj.add}:${vmessObj.port}` : String(vmessObj.add);
+                                }
+                            } catch {}
+                        }
+                    } else if (lower.startsWith('ss://')) {
+                        type = 'SS';
+                        badgeClass = 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-800/60';
+                        let rest = url.slice(5).trim();
+                        const hIdx = rest.indexOf('#');
+                        if (hIdx !== -1) {
+                            rest = rest.slice(0, hIdx);
+                        }
+                        if (rest.includes('@')) {
+                            address = rest.split('@')[1];
+                        } else {
+                            const decoded = safeBase64Decode(rest);
+                            if (decoded && decoded.includes('@')) {
+                                address = decoded.split('@')[1];
+                            }
+                        }
+                    } else if (lower.startsWith('ssr://')) {
+                        type = 'SSR';
+                        badgeClass = 'bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-800/60';
+                        const rest = url.slice(6).trim();
+                        const decoded = safeBase64Decode(rest);
+                        if (decoded) {
+                            const parts = decoded.split('/?');
+                            if (parts[0]) {
+                                const hostParts = parts[0].split(':');
+                                if (hostParts.length >= 2) address = `${hostParts[0]}:${hostParts[1]}`;
+                            }
+                            if (parts[1]) {
+                                const params = new URLSearchParams(parts[1]);
+                                const remarksB64 = params.get('remarks');
+                                if (remarksB64 && !name) {
+                                    const decRemarks = safeBase64Decode(remarksB64);
+                                    if (decRemarks) name = decRemarks;
+                                }
+                            }
+                        }
+                    } else if (lower.startsWith('tuic://')) {
+                        type = 'TUIC';
+                        badgeClass = 'bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 border-violet-200 dark:border-violet-800/60';
+                    } else if (lower.startsWith('http://') || lower.startsWith('https://')) {
+                        type = 'SUB';
+                        badgeClass = 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800/60';
+                    }
+
+                    // 通用地址解析 (如果前面未解析出)
+                    if (!address) {
+                        try {
+                            if (url.includes('@')) {
+                                const afterAt = url.split('@')[1];
+                                address = afterAt.split('?')[0].split('#')[0];
+                            } else if (url.startsWith('http://') || url.startsWith('https://')) {
+                                const u = new URL(url);
+                                address = u.host;
+                            }
+                        } catch {}
+                    }
+
+                    result.push({
+                        index: i,
+                        raw: url,
+                        type,
+                        name: name || `节点 #${i + 1}`,
+                        address: address || '',
+                        badgeClass
+                    });
+                }
+                return result;
+            },
+
+            switchInputView(mode) {
+                this.inputViewMode = mode;
+                try { localStorage.setItem('inputViewMode', mode); } catch {}
+            },
+
+            removeNodeAtIndex(idx) {
+                const list = this.parsedInputNodes;
+                if (idx >= 0 && idx < list.length) {
+                    list.splice(idx, 1);
+                    this.input = list.map(item => item.raw).join('\n\n');
+                    localStorage.setItem('inputTextarea', this.input);
+                    this.stockNotice = '已移除所选节点';
+                    setTimeout(() => { this.stockNotice = ''; }, 2000);
+                }
+            },
+
+            copyNodeUrl(url) {
+                if (!url) return;
+                navigator.clipboard.writeText(url).then(() => {
+                    this.stockNotice = '已复制节点链接到剪贴板';
+                    setTimeout(() => { this.stockNotice = ''; }, 2000);
+                }).catch(() => {});
+            },
+
+            formatInputSpacing() {
+                const list = this.parsedInputNodes;
+                if (list.length > 0) {
+                    this.input = list.map(item => item.raw).join('\n\n');
+                    localStorage.setItem('inputTextarea', this.input);
+                    this.stockNotice = `已重新规整 ${list.length} 个节点（空行分隔）`;
+                    setTimeout(() => { this.stockNotice = ''; }, 2500);
+                }
+            },
+
             init() {
+                // Fetch fixed subToken from backend
+                fetch('/api/sub-token').then(r => r.json()).then(d => {
+                    if (d?.token) this.fixedSubToken = d.token;
+                }).catch(() => {});
+
                 // Load translations
                 if (window.APP_TRANSLATIONS) {
                     this.processingText = window.APP_TRANSLATIONS.processing;
@@ -129,6 +312,8 @@ export const formLogicFn = (t) => {
 
                 // Load saved data
                 this.input = localStorage.getItem('inputTextarea') || '';
+                const savedViewMode = localStorage.getItem('inputViewMode');
+                if (savedViewMode) this.inputViewMode = savedViewMode;
                 this.showAdvanced = localStorage.getItem('advancedToggle') === 'true';
                 this.groupByCountry = localStorage.getItem('groupByCountry') === 'true';
                 this.includeAutoSelect = localStorage.getItem('includeAutoSelect') !== 'false';
@@ -362,18 +547,106 @@ export const formLogicFn = (t) => {
                 window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
             },
 
+            async loadFromStock() {
+                this.loadingStock = true;
+                this.stockNotice = '';
+                try {
+                    const res = await fetch('/api/stock');
+                    if (!res.ok) throw new Error('获取库存失败');
+                    const data = await res.json();
+                    if (data?.subToken) {
+                        this.fixedSubToken = data.subToken;
+                    }
+                    const stockSubs = Array.isArray(data?.subscriptions) ? data.subscriptions : [];
+                    const stockNodes = Array.isArray(data?.nodes)
+                        ? data.nodes
+                        : (typeof data?.nodes === 'string' ? data.nodes.split('\n') : []);
+                    const allStockItems = [...stockSubs, ...stockNodes].map(s => s.trim()).filter(Boolean);
+
+                    if (allStockItems.length === 0) {
+                        this.stockNotice = '库存中暂无保存的节点或订阅';
+                        setTimeout(() => { this.stockNotice = ''; }, 3500);
+                        return;
+                    }
+
+                    const currentLines = (this.input || '').split('\n').map(s => s.trim()).filter(Boolean);
+                    if (currentLines.length === 0) {
+                        this.input = allStockItems.join('\n\n');
+                        this.stockNotice = `已成功从库存加载 ${allStockItems.length} 项（已按节点空行分隔）`;
+                    } else {
+                        const seen = new Set();
+                        const merged = [];
+                        for (const item of currentLines) {
+                            if (!seen.has(item)) {
+                                seen.add(item);
+                                merged.push(item);
+                            }
+                        }
+                        let addedCount = 0;
+                        for (const item of allStockItems) {
+                            if (!seen.has(item)) {
+                                seen.add(item);
+                                merged.push(item);
+                                addedCount++;
+                            }
+                        }
+                        this.input = merged.join('\n\n');
+                        this.stockNotice = `已合并 ${addedCount} 个新项目 (去重后共 ${merged.length} 项)`;
+                    }
+                    localStorage.setItem('inputTextarea', this.input);
+                    setTimeout(() => { this.stockNotice = ''; }, 4000);
+                } catch (e) {
+                    console.error('Failed to load stock:', e);
+                    this.stockNotice = '加载库存失败，请稍后重试';
+                    setTimeout(() => { this.stockNotice = ''; }, 3500);
+                } finally {
+                    this.loadingStock = false;
+                }
+            },
+
             async submitForm() {
                 this.loading = true;
-                this.shortenedLinks = null; // Reset shortened links when generating new links
                 try {
-                    // Get custom rules from the child component via the hidden input
+                    // 1. 自动将当前输入源中的节点和订阅保存到库存
+                    try {
+                        const saveRes = await fetch('/api/stock', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ content: this.input })
+                        });
+                        if (saveRes.ok) {
+                            const saveJson = await saveRes.json();
+                            if (saveJson?.token) {
+                                this.fixedSubToken = saveJson.token;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Auto save stock warning:', e);
+                    }
+
+                    // 确定固定短链 Code
+                    let token = this.customShortCode?.trim() || this.fixedSubToken;
+                    if (!token) {
+                        try {
+                            const tokenRes = await fetch('/api/sub-token');
+                            const tokenJson = await tokenRes.json();
+                            if (tokenJson?.token) {
+                                token = tokenJson.token;
+                                this.fixedSubToken = token;
+                            }
+                        } catch {}
+                    }
+                    if (!token) token = 'sub';
+
+                    // 2. 构造指向该订阅合并源的完整参数
+                    const origin = window.location.origin;
+                    const tokenUrl = `${origin}/${token}`;
+
                     const customRulesInput = document.querySelector('input[name="customRules"]');
                     const customRules = customRulesInput && customRulesInput.value ? JSON.parse(customRulesInput.value) : [];
 
-                    // Construct URLs
-                    const origin = window.location.origin;
                     const params = new URLSearchParams();
-                    params.append('config', this.input);
+                    params.append('config', tokenUrl);
                     params.append('ua', this.customUA);
                     params.append('selectedRules', JSON.stringify(this.selectedRules));
                     params.append('customRules', JSON.stringify(customRules));
@@ -384,7 +657,6 @@ export const formLogicFn = (t) => {
                     if (this.externalController) params.append('external_controller', this.externalController);
                     if (this.externalUiDownloadUrl) params.append('external_ui_download_url', this.externalUiDownloadUrl);
 
-                    // Add configId if present in URL
                     const urlParams = new URLSearchParams(window.location.search);
                     const configId = this.currentConfigId || urlParams.get('configId');
                     if (configId) {
@@ -393,6 +665,7 @@ export const formLogicFn = (t) => {
 
                     const queryString = params.toString();
 
+                    // 完整长链接（用于展开查看）
                     this.generatedLinks = {
                         xray: origin + '/xray?' + queryString,
                         singbox: origin + '/singbox?' + queryString,
@@ -400,7 +673,20 @@ export const formLogicFn = (t) => {
                         surge: origin + '/surge?' + queryString
                     };
 
-                    // Scroll to results
+                    // 3. 直接生成固定短链接
+                    this.shortenedLinks = {
+                        xray: `${origin}/x/${token}`,
+                        singbox: `${origin}/b/${token}`,
+                        clash: `${origin}/c/${token}`,
+                        surge: `${origin}/s/${token}`
+                    };
+
+                    // 同步向后端注册短链 query 映射
+                    fetch(`${origin}/shorten-v2?url=${encodeURIComponent(origin + '/clash?' + queryString)}&shortCode=${encodeURIComponent(token)}`).catch(() => {});
+
+                    this.showFullUrls = false;
+
+                    // 滚动到结果区
                     setTimeout(() => {
                         const resultsDiv = document.querySelector('.mt-12');
                         if (resultsDiv) {
@@ -410,7 +696,7 @@ export const formLogicFn = (t) => {
 
                 } catch (error) {
                     console.error('Error generating links:', error);
-                    alert(window.APP_TRANSLATIONS.errorGeneratingLinks);
+                    alert(window.APP_TRANSLATIONS.errorGeneratingLinks || '生成链接失败');
                 } finally {
                     this.loading = false;
                 }

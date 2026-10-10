@@ -50,6 +50,7 @@ export const TextareaWithActions = (props) => {
             key,
             type = 'button',
             icon,
+            iconAttrs = {},
             label: actionLabel,
             hideLabelOnMobile = false,
             className: actionClass = '',
@@ -65,7 +66,7 @@ export const TextareaWithActions = (props) => {
               key={key || `${actionLabel || 'action'}-${index}`}
               {...attrs}
             >
-              {icon && <i class={icon}></i>}
+              {icon && <i class={icon} {...iconAttrs}></i>}
               {actionLabel && (
                 <span class={hideLabelOnMobile ? 'hidden sm:inline' : ''}>{actionLabel}</span>
               )}

@@ -16,8 +16,8 @@ export function createNodeRuntime(env = process.env) {
         dataDir,
         dataFile: path.join(dataDir, 'data.json'),
         credentialsFile: path.join(dataDir, 'credentials.json'),
-        defaultUsername: env.USERNAME || 'admin',
-        defaultPassword: env.PASSWORD || 'admin',
+        defaultUsername: env.AUTH_USERNAME || env.USERNAME || 'admin',
+        defaultPassword: env.AUTH_PASSWORD || env.PASSWORD || 'admin',
         subToken: env.SUB_TOKEN || undefined,
         apiUrl: env.API_URL || '',
         logger: console
