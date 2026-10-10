@@ -254,4 +254,4 @@
 - [Merge-sub](https://github.com/eooce/Merge-sub)
 
 ## 📄 许可证
-MIT License
+[MIT License](./LICENSE)
