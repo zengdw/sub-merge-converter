@@ -80,7 +80,13 @@ export function createApp(bindings = {}) {
 
     app.use('*', async (c, next) => {
         const acceptLanguage = getRequestHeader(c.req, 'Accept-Language');
-        const lang = c.req.query('lang') || acceptLanguage?.split(',')[0] || 'zh-CN';
+        const queryLang = c.req.query('lang');
+        const cookieLang = getCookie(c, 'lang');
+        const rawLang = queryLang || cookieLang || acceptLanguage?.split(',')[0] || 'zh-CN';
+        const lang = resolveLanguage(rawLang);
+        if (queryLang && queryLang !== cookieLang) {
+            setCookie(c, 'lang', lang, { path: '/', maxAge: 60 * 60 * 24 * 365 });
+        }
         c.set('lang', lang);
         c.set('t', createTranslator(lang));
         await next();
@@ -153,7 +159,7 @@ export function createApp(bindings = {}) {
         return c.html(
             <Layout title={t('pageTitle')} description={t('pageDescription')} keywords={t('pageKeywords')}>
                 <div class="flex flex-col min-h-screen">
-                    <Navbar />
+                    <Navbar lang={lang} />
                     <main class="flex-1">
                         <div class="container mx-auto px-4 py-8 pt-24">
                             <div class="max-w-4xl mx-auto">
@@ -181,7 +187,7 @@ export function createApp(bindings = {}) {
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
-            config = await resolveConfigInput(config, c.req, services.mergeSub);
+            config = await resolveConfigInput(config, c.req, services.mergeSub, services.shortLinks);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -238,7 +244,7 @@ export function createApp(bindings = {}) {
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
-            config = await resolveConfigInput(config, c.req, services.mergeSub);
+            config = await resolveConfigInput(config, c.req, services.mergeSub, services.shortLinks);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -288,7 +294,7 @@ export function createApp(bindings = {}) {
             if (!config) {
                 return c.text('Missing config parameter', 400);
             }
-            config = await resolveConfigInput(config, c.req, services.mergeSub);
+            config = await resolveConfigInput(config, c.req, services.mergeSub, services.shortLinks);
 
             const selectedRules = parseSelectedRules(c.req.query('selectedRules'));
             const customRules = parseJsonArray(c.req.query('customRules'));
@@ -375,7 +381,7 @@ export function createApp(bindings = {}) {
         if (!inputString) {
             return c.text('Missing config parameter', 400);
         }
-        inputString = await resolveConfigInput(inputString, c.req, services.mergeSub);
+        inputString = await resolveConfigInput(inputString, c.req, services.mergeSub, services.shortLinks);
 
         const proxylist = inputString.split('\n');
         const finalProxyList = [];
@@ -470,7 +476,7 @@ export function createApp(bindings = {}) {
                 } catch {}
             }
             const url = new URL(c.req.url);
-            if (token && code === token) {
+            if (token && (code === token || code === 'sub')) {
                 // 如果是固定的 subToken：强制确保 config 参数始终指向当前服务的最新库存合并源！
                 if (originalParam) {
                     try {
@@ -483,6 +489,16 @@ export function createApp(bindings = {}) {
                 } else {
                     originalParam = `?config=${encodeURIComponent(`${url.origin}/${token}`)}`;
                 }
+            } else if (originalParam) {
+                // 如果是自定义短码，重写使其指向当前 host 的 token 或 code 保证 resolveConfigInput 可直接识别
+                try {
+                    const sp = new URLSearchParams(originalParam.startsWith('?') ? originalParam.slice(1) : originalParam);
+                    const cfg = sp.get('config');
+                    if (cfg && (cfg.includes(`/${code}`) || cfg === code)) {
+                        sp.set('config', `${url.origin}/${token || code}`);
+                        originalParam = '?' + sp.toString();
+                    }
+                } catch {}
             }
             if (!originalParam) return c.text('Short URL not found', 404);
 
@@ -499,9 +515,15 @@ export function createApp(bindings = {}) {
         if (services.mergeSub) await services.mergeSub.init();
         const code = c.req.param('code');
         const token = services.mergeSub ? services.mergeSub.getSubToken() : null;
-        if (token && code === token) {
+        if (token && (code === token || code === 'sub')) {
             // v2rayN 等客户端请求固定短链 /x/:token 时，直接返回最新合并的 Base64 内容
             return handleSubExport(c);
+        }
+        if (services.shortLinks && code) {
+            const resolved = await services.shortLinks.resolveShortCode(code);
+            if (resolved) {
+                return handleSubExport(c);
+            }
         }
         return redirectHandler('xray')(c);
     });
@@ -824,12 +846,19 @@ export function createApp(bindings = {}) {
 
     app.get('/sub', handleSubExport);
 
-    // 动态路径匹配 SUB_TOKEN
+    // 动态路径匹配 SUB_TOKEN 或 自定义短码导出
     app.get('/:token', async (c, next) => {
         if (services.mergeSub) await services.mergeSub.init();
         const token = c.req.param('token');
-        if (services.mergeSub && token === services.mergeSub.getSubToken()) {
+        const mainToken = services.mergeSub ? services.mergeSub.getSubToken() : null;
+        if (services.mergeSub && (token === mainToken || token === 'sub' || token === 'stock')) {
             return handleSubExport(c);
+        }
+        if (services.shortLinks && token) {
+            const resolved = await services.shortLinks.resolveShortCode(token);
+            if (resolved) {
+                return handleSubExport(c);
+            }
         }
         await next();
     });
@@ -997,25 +1026,46 @@ function handleError(c, error, logger) {
     return c.text(`Error: ${error.message}`, 500);
 }
 
-async function resolveConfigInput(config, req, mergeSub) {
+async function resolveConfigInput(config, req, mergeSub, shortLinks) {
     if (!config || !mergeSub) return config;
     await mergeSub.init();
     const token = mergeSub.getSubToken();
     if (!token) return config;
 
-    const lines = config.split('\n');
+    const delimiter = config.includes('|') ? '|' : '\n';
+    const lines = config.split(delimiter);
     let hasMatched = false;
     const replaced = await Promise.all(lines.map(async (line) => {
         const trimmed = line.trim();
         if (!trimmed) return line;
-        if (trimmed === token || trimmed === 'stock') {
+        if (trimmed === token || trimmed === 'stock' || trimmed === 'sub') {
             hasMatched = true;
             return await mergeSub.getMergedNodesPlain();
         }
         if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
             try {
                 const u = new URL(trimmed);
-                if (u.pathname === `/${token}` || u.pathname === '/sub') {
+                const code = u.pathname.replace(/^\/+/, '');
+                // 1. 匹配默认 token 或 /sub 或 /stock
+                if (code === token || code === 'sub' || code === 'stock') {
+                    hasMatched = true;
+                    const cfip = u.searchParams.get('CFIP');
+                    const cfport = u.searchParams.get('CFPORT');
+                    return await mergeSub.getMergedNodesPlain(cfip, cfport);
+                }
+                // 2. 匹配短链注册表中的自定义短码
+                if (shortLinks && code) {
+                    const resolved = await shortLinks.resolveShortCode(code);
+                    if (resolved) {
+                        hasMatched = true;
+                        const cfip = u.searchParams.get('CFIP');
+                        const cfport = u.searchParams.get('CFPORT');
+                        return await mergeSub.getMergedNodesPlain(cfip, cfport);
+                    }
+                }
+                // 3. 匹配本服务域名的其他短码路径（非已知系统路由）
+                const reqHost = req?.header?.('host') || '';
+                if (reqHost && u.host === reqHost && code && !['clash', 'singbox', 'xray', 'surge', 'login', 'admin', 'api'].some(p => code.startsWith(p))) {
                     hasMatched = true;
                     const cfip = u.searchParams.get('CFIP');
                     const cfport = u.searchParams.get('CFPORT');
@@ -1025,5 +1075,5 @@ async function resolveConfigInput(config, req, mergeSub) {
         }
         return line;
     }));
-    return hasMatched ? replaced.join('\n') : config;
+    return hasMatched ? replaced.join(delimiter) : config;
 }

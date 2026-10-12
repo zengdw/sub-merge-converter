@@ -172,7 +172,7 @@ export async function fetchSubscriptionWithFormat(url, userAgent) {
 
         return { content, format, url, subscriptionUserinfo };
     } catch (error) {
-        console.error('Error fetching subscription:', error);
+        console.error(`Error fetching subscription [${url}]:`, error?.message || error);
         return null;
     }
 }

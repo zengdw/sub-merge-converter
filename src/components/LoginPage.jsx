@@ -2,8 +2,11 @@
 /** @jsxImportSource hono/jsx */
 import { Layout } from './Layout.jsx';
 import { APP_NAME } from '../constants.js';
+import { SUPPORTED_LANGUAGES } from './Navbar.jsx';
 
 export const LoginPage = ({ error = false, lang = 'zh-CN' }) => {
+    const currentLangObj = SUPPORTED_LANGUAGES.find(l => l.code === lang) || SUPPORTED_LANGUAGES[0];
+
     return (
         <Layout title={`登录 - ${APP_NAME}`} description="请输入管理员账号密码以访问服务">
             <div class="min-h-screen flex items-center justify-center p-4 bg-gray-50 dark:bg-gray-900 transition-colors duration-300 relative overflow-hidden">
@@ -11,11 +14,60 @@ export const LoginPage = ({ error = false, lang = 'zh-CN' }) => {
                 <div class="absolute -top-40 -left-40 w-96 h-96 bg-primary-500/10 dark:bg-primary-500/20 rounded-full blur-3xl pointer-events-none"></div>
                 <div class="absolute -bottom-40 -right-40 w-96 h-96 bg-purple-500/10 dark:purple-500/20 rounded-full blur-3xl pointer-events-none"></div>
 
-                {/* Dark mode button top right */}
-                <div class="absolute top-6 right-6">
+                {/* Top right action buttons */}
+                <div class="absolute top-6 right-6 flex items-center gap-2.5 z-20">
+                    {/* Language Selector Dropdown */}
+                    <div class="relative" x-data="{ langMenuOpen: false }">
+                        <button
+                            type="button"
+                            class="px-2.5 py-2 rounded-xl bg-white dark:bg-gray-800 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-750 border border-gray-200/80 dark:border-gray-700/80 shadow-sm transition-colors flex items-center gap-1.5 cursor-pointer"
+                            x-on:click="langMenuOpen = !langMenuOpen"
+                            aria-label="Switch language"
+                            title="切换语言 / Switch language"
+                        >
+                            <i class="fas fa-globe text-primary-500"></i>
+                            <span>{currentLangObj.short}</span>
+                            <i class="fas fa-chevron-down text-[10px] text-gray-400 transition-transform duration-200" x-bind:class="langMenuOpen ? 'rotate-180' : ''"></i>
+                        </button>
+
+                        <div
+                            x-cloak
+                            x-show="langMenuOpen"
+                            {...{
+                                'x-on:click.outside': 'langMenuOpen = false',
+                                'x-transition:enter': 'transition ease-out duration-150',
+                                'x-transition:enter-start': 'opacity-0 scale-95 translate-y-1',
+                                'x-transition:enter-end': 'opacity-100 scale-100 translate-y-0',
+                                'x-transition:leave': 'transition ease-in duration-100',
+                                'x-transition:leave-start': 'opacity-100 scale-100 translate-y-0',
+                                'x-transition:leave-end': 'opacity-0 scale-95 translate-y-1'
+                            }}
+                            class="absolute right-0 mt-2 w-36 bg-white dark:bg-gray-850 rounded-xl shadow-xl border border-gray-150 dark:border-gray-700 py-1.5 z-50 overflow-hidden"
+                        >
+                            {SUPPORTED_LANGUAGES.map((l) => (
+                                <button
+                                    type="button"
+                                    key={l.code}
+                                    class={`w-full text-left px-3 py-2 text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                                        l.code === lang
+                                            ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 font-semibold'
+                                            : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60'
+                                    }`}
+                                    x-on:click={`document.cookie = 'lang=${l.code};path=/;max-age=31536000'; const u = new URL(window.location.href); u.searchParams.set('lang', '${l.code}'); window.location.href = u.href;`}
+                                >
+                                    <span class="flex items-center gap-2">
+                                        <span>{l.flag}</span>
+                                        <span>{l.label}</span>
+                                    </span>
+                                    {l.code === lang && <i class="fas fa-check text-[10px] text-primary-500"></i>}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     <button
                         type="button"
-                        class="p-2.5 rounded-xl bg-white dark:bg-gray-800 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-700 transition-colors"
+                        class="p-2.5 rounded-xl bg-white dark:bg-gray-800 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-700 shadow-sm border border-gray-200 dark:border-gray-700 transition-colors cursor-pointer"
                         x-on:click="toggleDarkMode()"
                         aria-label="Toggle dark mode"
                     >

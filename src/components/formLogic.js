@@ -103,6 +103,12 @@ export const formLogicFn = (t) => {
             loading: false,
             loadingStock: false,
             stockNotice: '',
+            showStockOverwriteModal: false,
+            stockOverwriteInfo: {
+                totalCount: 0,
+                missingCount: 0
+            },
+            stockOverwriteResolver: null,
             showFullUrls: false,
             fixedSubToken: '',
             generatedLinks: null,
@@ -604,10 +610,83 @@ export const formLogicFn = (t) => {
                 }
             },
 
+            askStockOverwriteConfirm({ totalCount, missingCount }) {
+                this.stockOverwriteInfo = { totalCount, missingCount };
+                this.showStockOverwriteModal = true;
+                return new Promise((resolve) => {
+                    this.stockOverwriteResolver = resolve;
+                });
+            },
+
+            confirmStockOverwrite() {
+                this.showStockOverwriteModal = false;
+                if (this.stockOverwriteResolver) {
+                    const fn = this.stockOverwriteResolver;
+                    this.stockOverwriteResolver = null;
+                    fn('overwrite');
+                }
+            },
+
+            cancelStockOverwrite() {
+                this.showStockOverwriteModal = false;
+                if (this.stockOverwriteResolver) {
+                    const fn = this.stockOverwriteResolver;
+                    this.stockOverwriteResolver = null;
+                    fn('cancel');
+                }
+            },
+
+            mergeStockAndSubmit() {
+                this.showStockOverwriteModal = false;
+                if (this.stockOverwriteResolver) {
+                    const fn = this.stockOverwriteResolver;
+                    this.stockOverwriteResolver = null;
+                    fn('merge');
+                }
+            },
+
             async submitForm() {
                 this.loading = true;
                 try {
+                    // 0. 检查库存：若库存中已有节点/订阅，而当前输入源未包含它们，弹出精致自定义模态框
+                    try {
+                        const checkRes = await fetch('/api/stock');
+                        if (checkRes.ok) {
+                            const stockData = await checkRes.json();
+                            const stockSubs = Array.isArray(stockData?.subscriptions) ? stockData.subscriptions : [];
+                            const stockNodes = Array.isArray(stockData?.nodes)
+                                ? stockData.nodes
+                                : (typeof stockData?.nodes === 'string' ? stockData.nodes.split('\n') : []);
+                            const allStockItems = [...stockSubs, ...stockNodes].map(s => s.trim()).filter(Boolean);
+
+                            if (allStockItems.length > 0) {
+                                const currentInput = (this.input || '').trim();
+                                const missingItems = allStockItems.filter(item => !currentInput.includes(item));
+                                if (missingItems.length > 0) {
+                                    this.loading = false;
+                                    const action = await this.askStockOverwriteConfirm({
+                                        totalCount: allStockItems.length,
+                                        missingCount: missingItems.length
+                                    });
+
+                                    if (action === 'cancel') {
+                                        return;
+                                    }
+
+                                    this.loading = true;
+
+                                    if (action === 'merge') {
+                                        await this.loadFromStock();
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Check stock before submit warning:', e);
+                    }
+
                     // 1. 自动将当前输入源中的节点和订阅保存到库存
+                    let stockSaved = false;
                     try {
                         const saveRes = await fetch('/api/stock', {
                             method: 'POST',
@@ -615,6 +694,7 @@ export const formLogicFn = (t) => {
                             body: JSON.stringify({ content: this.input })
                         });
                         if (saveRes.ok) {
+                            stockSaved = true;
                             const saveJson = await saveRes.json();
                             if (saveJson?.token) {
                                 this.fixedSubToken = saveJson.token;
@@ -641,12 +721,14 @@ export const formLogicFn = (t) => {
                     // 2. 构造指向该订阅合并源的完整参数
                     const origin = window.location.origin;
                     const tokenUrl = `${origin}/${token}`;
+                    // 若成功保存到库存或存在固定 token 则指向 tokenUrl，若未保存且未认证则直接传入输入源，确保转换 100% 成功
+                    const configParam = (stockSaved || this.fixedSubToken) ? tokenUrl : this.input;
 
                     const customRulesInput = document.querySelector('input[name="customRules"]');
                     const customRules = customRulesInput && customRulesInput.value ? JSON.parse(customRulesInput.value) : [];
 
                     const params = new URLSearchParams();
-                    params.append('config', tokenUrl);
+                    params.append('config', configParam);
                     params.append('ua', this.customUA);
                     params.append('selectedRules', JSON.stringify(this.selectedRules));
                     params.append('customRules', JSON.stringify(customRules));
